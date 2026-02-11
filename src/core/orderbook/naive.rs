@@ -68,6 +68,7 @@ impl OrdersBucket {
             if match_size > 0 {
                 order.filled += match_size;
                 matched_size += match_size;
+                self.total_volume -= match_size;
 
                 events.push(MatcherTradeEvent::new_trade(
                     match_size,
@@ -103,7 +104,7 @@ use ahash::AHashMap;
 pub struct NaiveOrderBook {
     symbol_spec: CoreSymbolSpecification,
     ask_buckets: BTreeMap<Price, OrdersBucket>, // 卖单（价格升序）
-    bid_buckets: BTreeMap<Price, OrdersBucket>, // 买单（价格降序）
+    bid_buckets: BTreeMap<Price, OrdersBucket>, // 买单（价格升序）
     order_map: AHashMap<OrderId, (Price, OrderAction)>, // 运行时使用 AHashMap
     
     // 性能优化：缓存最优价格
@@ -217,24 +218,35 @@ impl NaiveOrderBook {
 
     /// 计算填充订单所需的预算
     fn check_budget_to_fill(&self, mut size: Size, action: OrderAction) -> Option<i64> {
-        let buckets = match action {
-            OrderAction::Ask => &self.bid_buckets,
-            OrderAction::Bid => &self.ask_buckets,
-        };
-
         let mut budget: i64 = 0;
+        match action {
+            OrderAction::Bid => {
+                for (price, bucket) in self.ask_buckets.iter() {
+                    let available = bucket.total_volume;
 
-        for (price, bucket) in buckets.iter() {
-            let available = bucket.total_volume;
+                    if size > available {
+                        size -= available;
+                        budget += (available * price) as i64;
+                    } else {
+                        budget += (size * price) as i64;
+                        return Some(budget);
+                    }
+                }
+            },
+            OrderAction::Ask => {
+                for (price, bucket) in self.bid_buckets.iter().rev() {
+                    let available = bucket.total_volume;
 
-            if size > available {
-                size -= available;
-                budget += (available * price) as i64;
-            } else {
-                budget += (size * price) as i64;
-                return Some(budget);
+                    if size > available {
+                        size -= available;
+                        budget += (available * price) as i64;
+                    } else {
+                        budget += (size * price) as i64;
+                        return Some(budget);
+                    }
+                }
             }
-        }
+        };
 
         None // 流动性不足
     }
@@ -507,7 +519,7 @@ impl super::OrderBook for NaiveOrderBook {
             data.ask_volumes.push(bucket.total_volume);
         }
 
-        // 买单（从高到低）
+        // 买单（从低到高）
         for (price, bucket) in self.bid_buckets.iter().take(depth) {
             data.bid_prices.push(*price);
             data.bid_volumes.push(bucket.total_volume);
