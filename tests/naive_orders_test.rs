@@ -143,7 +143,7 @@ fn basic_order_book_test() {
 
     orderbook.new_order(&mut bid_order2);
     println!("bid_order2 events");
-    for event in &bid_order.matcher_events {
+    for event in &bid_order2.matcher_events {
         println!("MatcherTradeEvent: \n{:?}", event);
     }
 }
@@ -157,19 +157,23 @@ fn naive_order_book_test() {
 
     let bids = add_depth(&mut orderbook, 1, 1, 5, OrderAction::Bid, 500, 10, 20, 1000);
     bids.into_iter().for_each(|item| { bid_orders.insert(item.order_id, item); });
+    let bids = add_depth(&mut orderbook, 2, 6, 5, OrderAction::Bid, 500, 10, 20, 1000);
+    bids.into_iter().for_each(|item| { bid_orders.insert(item.order_id, item); });
 
-    let asks = add_depth(&mut orderbook, 2, 6, 5, OrderAction::Ask, 510, 10, 20, 1000);
+    let asks = add_depth(&mut orderbook, 3, 11, 5, OrderAction::Ask, 510, 10, 20, 1000);
+    asks.into_iter().for_each(|item| { ask_orders.insert(item.order_id, item); });
+    let asks = add_depth(&mut orderbook, 4, 16, 5, OrderAction::Ask, 510, 10, 20, 1000);
     asks.into_iter().for_each(|item| { ask_orders.insert(item.order_id, item); });
 
     print_orderbook(&mut orderbook);
 
 
     let mut ask_order_one = OrderCommand {
-        uid: 3,
-        order_id: 16,
+        uid: 5,
+        order_id: 21,
         symbol: 1,
-        price: 480 * 40, // the minimum total transaction price I accept (for Ask)
-        size: 40, // the size I want to fill
+        price: 490 * 80, // the minimum total transaction price I accept (for Ask)
+        size: 80, // the size I want to fill
         action: OrderAction::Ask,
         order_type: OrderType::FokBudget,
         reserve_price: 0,

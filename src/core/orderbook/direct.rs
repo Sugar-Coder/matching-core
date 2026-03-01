@@ -19,7 +19,7 @@ struct DirectOrder {
     reserve_price: Price,
     timestamp: i64,
     next: Option<OrderIdx>,
-    prev: Option<OrderIdx>,
+    prev: Option<OrderIdx>, // prev指向优先级更低的订单、后加入桶内的订单（对于bid_bucket，prev指向价格更低者）
     parent: BucketIdx,
 }
 
@@ -44,12 +44,13 @@ pub struct DirectOrderBook {
     
     // 价格索引，快速定位最优价格
     ask_price_buckets: BTreeMap<Price, BucketIdx>, // 卖单：价格升序
-    bid_price_buckets: BTreeMap<Price, BucketIdx>, // 买单：价格降序
+    bid_price_buckets: BTreeMap<Price, BucketIdx>, // 买单：价格升序
     
     // 订单 ID 快速索引
     order_id_index: AHashMap<OrderId, OrderIdx>,
     
     // 最优订单快捷引用，类似 LMAX Disruptor 的快速路径
+    // 一直指向最先进入桶内的订单
     best_ask_order: Option<OrderIdx>, // 卖一订单
     best_bid_order: Option<OrderIdx>, // 买一订单
 }
@@ -164,6 +165,7 @@ impl DirectOrderBook {
     fn try_match(&mut self, cmd: &mut OrderCommand) -> Size {
         let is_bid = cmd.action == OrderAction::Bid;
         let limit_price = cmd.price;
+        let is_budget_order = cmd.order_type == OrderType::FokBudget;
 
         let mut maker_idx = if is_bid {
             self.best_ask_order
@@ -171,17 +173,19 @@ impl DirectOrderBook {
             self.best_bid_order
         };
 
-        // 检查是否有可撮合订单
-        if let Some(idx) = maker_idx {
-            let maker_price = self.orders[idx].price;
-            if is_bid && maker_price > limit_price {
+        // 对于非budget类型订单，提前检查是否有可撮合订单
+        if !is_budget_order {
+            if let Some(idx) = maker_idx {
+                let maker_price = self.orders[idx].price;
+                if is_bid && maker_price > limit_price {
+                    return 0;
+                }
+                if !is_bid && maker_price < limit_price {
+                    return 0;
+                }
+            } else {
                 return 0;
             }
-            if !is_bid && maker_price < limit_price {
-                return 0;
-            }
-        } else {
-            return 0;
         }
 
         let mut filled = 0;
@@ -196,11 +200,13 @@ impl DirectOrderBook {
 
             let (maker_price, maker_filled, maker_size, maker_parent, maker_prev) = {
                 let order = &self.orders[idx];
-                if is_bid && order.price > limit_price {
-                    break;
-                }
-                if !is_bid && order.price < limit_price {
-                    break;
+                if !is_budget_order { // budget order already calculated price
+                    if is_bid && order.price > limit_price {
+                        break;
+                    }
+                    if !is_bid && order.price < limit_price {
+                        break;
+                    }
                 }
                 (order.price, order.filled, order.size, order.parent, order.prev)
             };
